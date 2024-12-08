@@ -5,6 +5,8 @@
 #include <cmath>
 #include "raylib.h"
 
+void drawBoard(Board& board);
+
 enum PieceType {
     none,
     pawn,
@@ -18,6 +20,11 @@ enum PieceColor {
     unknown,
     black,
     white
+};
+enum GameState {
+    unknown,
+    whiteTurn,
+    blackTurn,
 };
 
 class Piece {
@@ -68,12 +75,39 @@ private:
     std::optional<Piece> piece {};
 };
 
-bool isMoveValid(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
 
-    switch (pieceType) {
+class Board {
+public:
+    Board(const int size = 8) : size(size), gameState{GameState::whiteTurn} {
+        for (int y = 0; y < size; ++y) {
+            std::vector<Tile> row;
+            for (int x = 0; x < size; ++x) {
+                row.emplace_back(Tile(x, y));
+            }
+            board.push_back(row);
+        }
+    }
+
+    Tile& getTile(int x, int y) {
+        if (x < 0 || x >= board.size() || y < 0 || y >= board[0].size()) {
+            throw std::out_of_range("Invalid tile coordinates");
+        }
+        return board[y][x];
+    }
+
+    void placePiece(int x, int y, PieceType type, PieceColor color) {
+        getTile(x, y).setPiece(type, color);
+    }
+    void removePiece(int x, int y) {
+        getTile(x, y).removePiece();
+    }
+    bool isMoveValid(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
+
         // Calculate deltas
         int deltaX = abs(endX - startX);
         int deltaY = abs(endY - startY);
+
+        switch (pieceType) {
 
         case pawn:
             // Pawns move 1 square forward (2 squares on first move) and capture diagonally
@@ -115,42 +149,40 @@ bool isMoveValid(int startX, int startY, int endX, int endY, PieceColor pieceCol
 
         default:
             return false;
+        }
     }
-}
 
-class Board {
-public:
-    Board(const int size = 8) : size(size){
-        for (int y = 0; y < size; ++y) {
-            std::vector<Tile> row;
-            for (int x = 0; x < size; ++x) {
-                row.emplace_back(Tile(x, y));
+    bool checkForObstaclesAtDestanationTile(int endX, int endY, PieceColor pieceColor) {
+        if (!getTile(endX, endY).hasPiece()) {
+            return true;
+        }
+        else {
+            Piece piece = getTile(endX, endY).getPiece().value();
+            if (piece.getColor() == pieceColor) {
+                return false;
             }
-            board.push_back(row);
+            else {
+                return true;
+            }
         }
+        return false;
     }
 
-    Tile& getTile(int x, int y) {
-        if (x < 0 || x >= board.size() || y < 0 || y >= board[0].size()) {
-            throw std::out_of_range("Invalid tile coordinates");
-        }
-        return board[y][x];
-    }
-
-    void placePiece(int x, int y, PieceType type, PieceColor color) {
-        getTile(x, y).setPiece(type, color);
-    }
-    void removePiece(int x, int y) {
-        getTile(x, y).removePiece();
-    }
     void makeMove(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
         if (isMoveValid(startX, startY, endX, endY, pieceColor, pieceType)) {
             getTile(startX, startY).removePiece();
             getTile(endX, endY).setPiece(pieceType, pieceColor);
         }
     }
+
+    // pawn promotion, add where its needed
+    void promotePawn(int x, int y, PieceColor pieceColor) {
+        getTile(x, y).removePiece();
+        getTile(x, y).setPiece(PieceType::queen, pieceColor);
+    }
     int getSize() const { return size; }
 private:
+    GameState gameState{};
     const int size{};
     std::vector<std::vector<Tile>> board {};
 };
