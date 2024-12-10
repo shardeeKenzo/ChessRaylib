@@ -5,8 +5,6 @@
 #include <cmath>
 #include "raylib.h"
 
-void drawBoard(Board& board);
-
 enum PieceType {
     none,
     pawn,
@@ -17,19 +15,19 @@ enum PieceType {
     king,
 };
 enum PieceColor {
-    unknown,
+    unknownColor,
     black,
     white
 };
 enum GameState {
-    unknown,
+    unknownState,
     whiteTurn,
     blackTurn,
 };
 
 class Piece {
 public:
-    Piece() : color{ PieceColor::unknown }, pieceType{ PieceType::none }
+    Piece() : color{ PieceColor::unknownColor }, pieceType{ PieceType::none }
     {
     }
     Piece(PieceType type_, PieceColor color_) : color(color_), pieceType(type_)
@@ -88,6 +86,15 @@ public:
         }
     }
 
+    bool isTurnValid(PieceColor pieceColor) const {
+        return (gameState == GameState::whiteTurn && pieceColor == PieceColor::white) ||
+               (gameState == GameState::blackTurn && pieceColor == PieceColor::black);
+    }
+
+    void switchTurn() {
+        gameState = (gameState == GameState::whiteTurn) ? GameState::blackTurn : GameState::whiteTurn;
+    }
+
     Tile& getTile(int x, int y) {
         if (x < 0 || x >= board.size() || y < 0 || y >= board[0].size()) {
             throw std::out_of_range("Invalid tile coordinates");
@@ -101,50 +108,61 @@ public:
     void removePiece(int x, int y) {
         getTile(x, y).removePiece();
     }
-    bool isMoveValid(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
+    bool isPathClear(int startX, int startY, int endX, int endY) {
+        int deltaX = (endX - startX) == 0 ? 0 : (endX - startX) / abs(endX - startX);
+        int deltaY = (endY - startY) == 0 ? 0 : (endY - startY) / abs(endY - startY);
 
-        // Calculate deltas
+        int x = startX + deltaX;
+        int y = startY + deltaY;
+
+        while (x != endX || y != endY) {
+            if (getTile(x, y).hasPiece()) {
+                return false;
+            }
+            x += deltaX;
+            y += deltaY;
+        }
+        return true;
+    }
+
+    bool isMoveValid(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
+        
         int deltaX = abs(endX - startX);
         int deltaY = abs(endY - startY);
 
         switch (pieceType) {
-
         case pawn:
-            // Pawns move 1 square forward (2 squares on first move) and capture diagonally
+            
             if (pieceColor == PieceColor::white) {
-                // Forward movement
-                if (startY == 1 && endY - startY == 2 && deltaX == 0) return true; // First move
-                if (endY - startY == 1 && deltaX == 0) return true;               // Normal move
-                // Capture movement
-                if (endY - startY == 1 && deltaX == 1) return true;
+                if (startY == 1 && endY - startY == 2 && deltaX == 0 && isPathClear(startX, startY, endX, endY)) return true; // First move
+                if (endY - startY == 1 && deltaX == 0) return true; // Normal move
+                if (endY - startY == 1 && deltaX == 1) return true; // Capture
             }
             else if (pieceColor == PieceColor::black) {
-                // Forward movement
-                if (startY == 6 && startY - endY == 2 && deltaX == 0) return true; // First move
-                if (startY - endY == 1 && deltaX == 0) return true;               // Normal move
-                // Capture movement
-                if (startY - endY == 1 && deltaX == 1) return true;
+                if (startY == 6 && startY - endY == 2 && deltaX == 0 && isPathClear(startX, startY, endX, endY)) return true; // First move
+                if (startY - endY == 1 && deltaX == 0) return true; // Normal move
+                if (startY - endY == 1 && deltaX == 1) return true; // Capture
             }
             return false;
 
         case knight:
-            // Knight moves in an "L" shape
+            
             return (deltaX == 2 && deltaY == 1) || (deltaX == 1 && deltaY == 2);
 
         case bishop:
-            // Bishop moves diagonally
-            return deltaX == deltaY;
+            
+            return deltaX == deltaY && isPathClear(startX, startY, endX, endY);
 
         case rook:
-            // Rook moves horizontally or vertically
-            return (deltaX == 0 && deltaY > 0) || (deltaY == 0 && deltaX > 0);
+            
+            return ((deltaX == 0 && deltaY > 0) || (deltaY == 0 && deltaX > 0)) && isPathClear(startX, startY, endX, endY);
 
         case queen:
-            // Queen combines bishop and rook moves
-            return (deltaX == deltaY) || (deltaX == 0 && deltaY > 0) || (deltaY == 0 && deltaX > 0);
+            
+            return ((deltaX == deltaY) || (deltaX == 0 && deltaY > 0) || (deltaY == 0 && deltaX > 0)) && isPathClear(startX, startY, endX, endY);
 
         case king:
-            // King moves 1 square in any direction
+            
             return deltaX <= 1 && deltaY <= 1;
 
         default:
@@ -168,10 +186,18 @@ public:
         return false;
     }
 
+    bool validate(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
+        if (isMoveValid(startX, startY, endX, endY, pieceColor, pieceType) && isTurnValid(pieceColor) && checkForObstaclesAtDestanationTile(endX, endY, pieceColor)) {
+            return true;
+        }
+        return false;
+    }
+
     void makeMove(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
-        if (isMoveValid(startX, startY, endX, endY, pieceColor, pieceType)) {
+        if (validate(startX, startY, endX, endY, pieceColor, pieceType)) {
             getTile(startX, startY).removePiece();
             getTile(endX, endY).setPiece(pieceType, pieceColor);
+            switchTurn();
         }
     }
 
@@ -244,6 +270,14 @@ int main()
     chessBoard.placePiece(5, 1, PieceType::pawn, PieceColor::white);
     chessBoard.placePiece(6, 1, PieceType::pawn, PieceColor::white);
     chessBoard.placePiece(7, 1, PieceType::pawn, PieceColor::white);
+    chessBoard.placePiece(7, 0, PieceType::rook, PieceColor::white);
+    chessBoard.placePiece(0, 0, PieceType::rook, PieceColor::white);
+    chessBoard.placePiece(6, 0, PieceType::knight, PieceColor::white);
+    chessBoard.placePiece(1, 0, PieceType::knight, PieceColor::white);
+    chessBoard.placePiece(5, 0, PieceType::bishop, PieceColor::white);
+    chessBoard.placePiece(2, 0, PieceType::bishop, PieceColor::white);
+    chessBoard.placePiece(4, 0, PieceType::queen, PieceColor::white);
+    chessBoard.placePiece(3, 0, PieceType::king, PieceColor::white);
 
     chessBoard.placePiece(0, 6, PieceType::pawn, PieceColor::black);
     chessBoard.placePiece(1, 6, PieceType::pawn, PieceColor::black);
@@ -253,9 +287,17 @@ int main()
     chessBoard.placePiece(5, 6, PieceType::pawn, PieceColor::black);
     chessBoard.placePiece(6, 6, PieceType::pawn, PieceColor::black);
     chessBoard.placePiece(7, 6, PieceType::pawn, PieceColor::black);
+    chessBoard.placePiece(7, 7, PieceType::rook, PieceColor::black);
+    chessBoard.placePiece(0, 7, PieceType::rook, PieceColor::black);
+    chessBoard.placePiece(6, 7, PieceType::knight, PieceColor::black);
+    chessBoard.placePiece(1, 7, PieceType::knight, PieceColor::black);
+    chessBoard.placePiece(5, 7, PieceType::bishop, PieceColor::black);
+    chessBoard.placePiece(2, 7, PieceType::bishop, PieceColor::black);
+    chessBoard.placePiece(4, 7, PieceType::queen, PieceColor::black);
+    chessBoard.placePiece(3, 7, PieceType::king, PieceColor::black);
 
-    chessBoard.makeMove(0, 1, 0, 2, white, pawn);
-    chessBoard.makeMove(7, 6, 7, 5, black, pawn);
+    chessBoard.makeMove(0, 1, 0, 3, white, pawn);
+    chessBoard.makeMove(7, 6, 7, 4, black, pawn);
 
     SetTargetFPS(60);
 
