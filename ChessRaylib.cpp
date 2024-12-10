@@ -3,6 +3,7 @@
 #include <string>
 #include <optional>
 #include <cmath>
+#include <map>
 #include "raylib.h"
 
 enum PieceType {
@@ -213,6 +214,31 @@ private:
     std::vector<std::vector<Tile>> board {};
 };
 
+std::map<std::string, Texture2D> pieceTextures;
+
+
+void loadTextures() {
+    pieceTextures["pawn_white"] = LoadTexture("images/pawn_white.png");
+    pieceTextures["pawn_black"] = LoadTexture("images/pawn_black.png");
+    pieceTextures["knight_white"] = LoadTexture("images/knight_white.png");
+    pieceTextures["knight_black"] = LoadTexture("images/knight_black.png");
+    pieceTextures["rook_white"] = LoadTexture("images/rook_white.png");
+    pieceTextures["rook_black"] = LoadTexture("images/rook_black.png");
+    pieceTextures["bishop_white"] = LoadTexture("images/bishop_white.png");
+    pieceTextures["bishop_black"] = LoadTexture("images/bishop_black.png");
+    pieceTextures["queen_white"] = LoadTexture("images/queen_white.png");
+    pieceTextures["queen_black"] = LoadTexture("images/queen_black.png");
+    pieceTextures["king_white"] = LoadTexture("images/king_white.png");
+    pieceTextures["king_black"] = LoadTexture("images/king_black.png");
+}
+
+
+void unloadTextures() {
+    for (auto& [key, texture] : pieceTextures) {
+        UnloadTexture(texture);
+    }
+}
+
 
 void drawBoard(Board& board) {
     const int tileSize = 80;
@@ -220,36 +246,35 @@ void drawBoard(Board& board) {
 
     for (int row = 0; row < boardSize; ++row) {
         for (int col = 0; col < boardSize; ++col) {
+            
             Color tileColor = (row + col) % 2 == 0 ? RAYWHITE : DARKGRAY;
             DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, tileColor);
 
+            
             Tile& tile = board.getTile(col, row);
-
             if (tile.hasPiece()) {
                 const Piece& piece = *tile.getPiece();
-                std::string pieceSymbol{};
+                std::string textureKey;
 
+                
                 switch (piece.getType()) {
-                case PieceType::pawn: pieceSymbol = "P"; break;
-                case PieceType::knight: pieceSymbol = "N"; break;
-                case PieceType::bishop: pieceSymbol = "B"; break;
-                case PieceType::rook: pieceSymbol = "R"; break;
-                case PieceType::queen: pieceSymbol = "Q"; break;
-                case PieceType::king: pieceSymbol = "K"; break;
-                default: pieceSymbol = ""; break;
+                case PieceType::pawn: textureKey = piece.getColor() == PieceColor::white ? "pawn_white" : "pawn_black"; break;
+                case PieceType::knight: textureKey = piece.getColor() == PieceColor::white ? "knight_white" : "knight_black"; break;
+                case PieceType::rook: textureKey = piece.getColor() == PieceColor::white ? "rook_white" : "rook_black"; break;
+                case PieceType::bishop: textureKey = piece.getColor() == PieceColor::white ? "bishop_white" : "bishop_black"; break;
+                case PieceType::queen: textureKey = piece.getColor() == PieceColor::white ? "queen_white" : "queen_black"; break;
+                case PieceType::king: textureKey = piece.getColor() == PieceColor::white ? "king_white" : "king_black"; break;
+                    
+                default: textureKey = ""; break;
                 }
 
-                if (!pieceSymbol.empty()) {
-                    DrawText(pieceSymbol.c_str(),
-                        col * tileSize + tileSize / 2 - 10,
-                        row * tileSize + tileSize / 2 - 10,
-                        20,
-                        piece.getColor() == PieceColor::white ? BLUE : RED);
+                if (!textureKey.empty()) {
+                    Texture2D texture = pieceTextures[textureKey];
+                    DrawTexture(texture, col * tileSize, row * tileSize, WHITE);
                 }
             }
         }
     }
-
 }
 
 
@@ -261,6 +286,7 @@ int main()
     InitWindow(screenWidth, screenHeight, "Chess Game");
 
     Board chessBoard;
+    loadTextures();
 
     chessBoard.placePiece(0, 1, PieceType::pawn, PieceColor::white);
     chessBoard.placePiece(1, 1, PieceType::pawn, PieceColor::white);
@@ -309,6 +335,8 @@ int main()
 
         EndDrawing();
     }
+
+    unloadTextures();
 
     CloseWindow();
 
