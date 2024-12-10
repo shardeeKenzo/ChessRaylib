@@ -198,6 +198,11 @@ public:
         if (validate(startX, startY, endX, endY, pieceColor, pieceType)) {
             getTile(startX, startY).removePiece();
             getTile(endX, endY).setPiece(pieceType, pieceColor);
+
+            if (pieceType == PieceType::pawn && (endY == 0 || endY == 7)) {
+                promotePawn(endX, endY, pieceColor);
+            }
+
             switchTurn();
         }
     }
@@ -277,6 +282,33 @@ void drawBoard(Board& board) {
     }
 }
 
+void handlePlayerInput(Board& board, PieceColor currentTurn) {
+    static bool pieceSelected = false;
+    static int selectedX = -1, selectedY = -1;
+
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        int tileX = GetMouseX() / 80; 
+        int tileY = GetMouseY() / 80;
+
+        if (!pieceSelected) {
+            // Select a piece
+            if (board.getTile(tileX, tileY).hasPiece() &&
+                board.getTile(tileX, tileY).getPiece()->getColor() == currentTurn) {
+                pieceSelected = true;
+                selectedX = tileX;
+                selectedY = tileY;
+            }
+        }
+        else {
+            // Move the piece
+            board.makeMove(selectedX, selectedY, tileX, tileY,
+                board.getTile(selectedX, selectedY).getPiece()->getColor(),
+                board.getTile(selectedX, selectedY).getPiece()->getType());
+            pieceSelected = false;
+        }
+    }
+}
+
 
 int main()
 {
@@ -328,6 +360,9 @@ int main()
     SetTargetFPS(60);
 
     while (!WindowShouldClose()) {
+
+        handlePlayerInput(chessBoard, chessBoard.isTurnValid(PieceColor::white) ? PieceColor::white : PieceColor::black);
+
         BeginDrawing();
         ClearBackground(BLACK);
 
