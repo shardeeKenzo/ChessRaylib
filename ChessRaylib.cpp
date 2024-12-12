@@ -50,6 +50,13 @@ private:
     PieceType pieceType{};
 };
 
+bool isAnimating = false;              // Whether an animation is ongoing
+float animationTime = 0.0f;            // Elapsed time for the current animation
+float animationDuration = 0.3f;        // Total duration of the animation in seconds
+int animStartX = -1, animStartY = -1;  // Starting tile of the animated piece
+int animEndX = -1, animEndY = -1;      // Ending tile of the animated piece
+Piece animatingPiece;                  // Piece being animated
+
 class Tile {
 public:
     Tile(int row_, int column_) : row{row_}, column{column_}, piece{std::nullopt}
@@ -248,6 +255,21 @@ void unloadTextures() {
     }
 }
 
+void updateAnimation(Board& board, float deltaTime) {
+    if (!isAnimating) return;
+
+    animationTime += deltaTime;
+    if (animationTime >= animationDuration) {
+        isAnimating = false;
+        board.getTile(animEndX, animEndY).setPiece(animatingPiece.getType(), animatingPiece.getColor());
+        board.switchTurn();
+    }
+}
+
+float Lerp(float start, float end, float t) {
+    return start + t * (end - start);
+}
+
 
 void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
     int selectedX, int selectedY, bool pieceSelected) {
@@ -257,25 +279,21 @@ void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
     for (int row = 0; row < boardSize; ++row) {
         for (int col = 0; col < boardSize; ++col) {
             
+            Color tileColor = (row + col) % 2 == 0 ? RAYWHITE : DARKGRAY;
+            DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, tileColor);
+            DrawRectangleLines(col * tileSize, row * tileSize, tileSize, tileSize, BLACK);
+
+            
             if (pieceSelected && row == selectedY && col == selectedX) {
                 DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, GREEN);
-                DrawRectangleLines(col * tileSize, row * tileSize, tileSize, tileSize, BLACK);
             }
-            
             else if (std::find(validMoves.begin(), validMoves.end(), std::make_pair(col, row)) != validMoves.end()) {
                 DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, YELLOW);
-                DrawRectangleLines(col * tileSize, row * tileSize, tileSize, tileSize, BLACK);
-            }
-            
-            else {
-                Color tileColor = (row + col) % 2 == 0 ? RAYWHITE : DARKGRAY;
-                DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, tileColor);
-                DrawRectangleLines(col * tileSize, row * tileSize, tileSize, tileSize, BLACK);
             }
 
             
             Tile& tile = board.getTile(col, row);
-            if (tile.hasPiece()) {
+            if (tile.hasPiece() && (!isAnimating || animStartX != col || animStartY != row)) {
                 const Piece& piece = *tile.getPiece();
                 std::string textureKey;
 
@@ -296,7 +314,31 @@ void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
             }
         }
     }
+
+    
+    if (isAnimating) {
+        float t = animationTime / animationDuration;
+        float animX = Lerp(animStartX * tileSize, animEndX * tileSize, t);
+        float animY = Lerp(animStartY * tileSize, animEndY * tileSize, t);
+
+        std::string textureKey;
+        switch (animatingPiece.getType()) {
+        case PieceType::pawn: textureKey = animatingPiece.getColor() == PieceColor::white ? "pawn_white" : "pawn_black"; break;
+        case PieceType::knight: textureKey = animatingPiece.getColor() == PieceColor::white ? "knight_white" : "knight_black"; break;
+        case PieceType::rook: textureKey = animatingPiece.getColor() == PieceColor::white ? "rook_white" : "rook_black"; break;
+        case PieceType::bishop: textureKey = animatingPiece.getColor() == PieceColor::white ? "bishop_white" : "bishop_black"; break;
+        case PieceType::queen: textureKey = animatingPiece.getColor() == PieceColor::white ? "queen_white" : "queen_black"; break;
+        case PieceType::king: textureKey = animatingPiece.getColor() == PieceColor::white ? "king_white" : "king_black"; break;
+        default: textureKey = ""; break;
+        }
+
+        if (!textureKey.empty()) {
+            Texture2D texture = pieceTextures[textureKey];
+            DrawTexture(texture, animX, animY, WHITE);
+        }
+    }
 }
+
 
 
 void handlePlayerInput(Board& board, PieceColor currentTurn,
@@ -328,19 +370,30 @@ void handlePlayerInput(Board& board, PieceColor currentTurn,
             }
         }
         else {
-
+            
             if (std::find(validMoves.begin(), validMoves.end(), std::make_pair(tileX, tileY)) != validMoves.end()) {
-                board.makeMove(selectedX, selectedY, tileX, tileY,
-                    board.getTile(selectedX, selectedY).getPiece()->getColor(),
-                    board.getTile(selectedX, selectedY).getPiece()->getType());
+                
+                isAnimating = true;
+                animationTime = 0.0f;
+                animStartX = selectedX;
+                animStartY = selectedY;
+                animEndX = tileX;
+                animEndY = tileY;
+                animatingPiece = *board.getTile(selectedX, selectedY).getPiece();
+
+                board.getTile(selectedX, selectedY).removePiece();
+
+                pieceSelected = false;
+                validMoves.clear();
             }
-            pieceSelected = false;
-            validMoves.clear();
+            else {
+                
+                pieceSelected = false;
+                validMoves.clear();
+            }
         }
     }
 }
-
-
 
 int main()
 {
@@ -393,16 +446,19 @@ int main()
     SetTargetFPS(60);
 
     while (!WindowShouldClose()) {
-       
-        PieceColor currentTurn = chessBoard.isTurnValid(PieceColor::white) ? PieceColor::white : PieceColor::black;
+        float deltaTime = GetFrameTime(); 
 
-        handlePlayerInput(chessBoard, currentTurn, validMoves, selectedX, selectedY, pieceSelected);
+        if (isAnimating) {
+            updateAnimation(chessBoard, deltaTime);
+        }
+        else {
+            PieceColor currentTurn = chessBoard.isTurnValid(PieceColor::white) ? PieceColor::white : PieceColor::black;
+            handlePlayerInput(chessBoard, currentTurn, validMoves, selectedX, selectedY, pieceSelected);
+        }
 
         BeginDrawing();
         ClearBackground(BLACK);
-
         drawBoard(chessBoard, validMoves, selectedX, selectedY, pieceSelected);
-
         EndDrawing();
     }
 
