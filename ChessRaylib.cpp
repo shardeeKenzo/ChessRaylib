@@ -84,7 +84,12 @@ private:
 
 class Board {
 public:
-    Board(const int size = 8) : size(size), gameState{GameState::whiteTurn} {
+public:
+    Board(const int size = 8)
+        : size(size), gameState{ GameState::whiteTurn }, lastDoubleMove{ -1, -1 },
+        whiteKingMoved{ false }, blackKingMoved{ false },
+        whiteRookMovedLeft{ false }, whiteRookMovedRight{ false },
+        blackRookMovedLeft{ false }, blackRookMovedRight{ false } {
         for (int y = 0; y < size; ++y) {
             std::vector<Tile> row;
             for (int x = 0; x < size; ++x) {
@@ -133,55 +138,6 @@ public:
         return true;
     }
 
-    bool isMoveValid(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
-        int deltaX = abs(endX - startX);
-        int deltaY = abs(endY - startY);
-
-        switch (pieceType) {
-        case pawn:
-            if (pieceColor == PieceColor::white) {
-                
-                if (startY == 1 && endY - startY == 2 && deltaX == 0 && isPathClear(startX, startY, endX, endY)) return true; 
-                if (endY - startY == 1 && deltaX == 0 && !getTile(endX, endY).hasPiece()) return true; 
-
-                
-                if (endY - startY == 1 && deltaX == 1 && getTile(endX, endY).hasPiece() &&
-                    getTile(endX, endY).getPiece()->getColor() == PieceColor::black) return true;
-            }
-            else if (pieceColor == PieceColor::black) {
-                
-                if (startY == 6 && startY - endY == 2 && deltaX == 0 && isPathClear(startX, startY, endX, endY)) return true; 
-                if (startY - endY == 1 && deltaX == 0 && !getTile(endX, endY).hasPiece()) return true; 
-
-                
-                if (startY - endY == 1 && deltaX == 1 && getTile(endX, endY).hasPiece() &&
-                    getTile(endX, endY).getPiece()->getColor() == PieceColor::white) return true;
-            }
-            return false;
-
-        case knight:
-            return (deltaX == 2 && deltaY == 1) || (deltaX == 1 && deltaY == 2);
-
-        case bishop:
-            return deltaX == deltaY && isPathClear(startX, startY, endX, endY);
-
-        case rook:
-            return ((deltaX == 0 && deltaY > 0) || (deltaY == 0 && deltaX > 0)) && isPathClear(startX, startY, endX, endY);
-
-        case queen:
-            return ((deltaX == deltaY) || (deltaX == 0 && deltaY > 0) || (deltaY == 0 && deltaX > 0)) && isPathClear(startX, startY, endX, endY);
-
-        case king:
-            return deltaX <= 1 && deltaY <= 1;
-
-        default:
-            return false;
-        }
-    }
-
-
-
-
     bool checkForObstaclesAtDestanationTile(int endX, int endY, PieceColor pieceColor) {
         if (!getTile(endX, endY).hasPiece()) {
             return true;
@@ -204,30 +160,163 @@ public:
         }
         return false;
     }
-
-    void makeMove(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
-        if (validate(startX, startY, endX, endY, pieceColor, pieceType)) {
-            getTile(startX, startY).removePiece();
-            getTile(endX, endY).setPiece(pieceType, pieceColor);
-
-            if (pieceType == PieceType::pawn && (endY == 0 || endY == 7)) {
-                promotePawn(endX, endY, pieceColor);
-            }
-
-            switchTurn();
-        }
-    }
-
     
     void promotePawn(int x, int y, PieceColor pieceColor) {
         getTile(x, y).removePiece();
         getTile(x, y).setPiece(PieceType::queen, pieceColor);
     }
+
+    bool isCastlingValid(int startX, int startY, int endX, int endY, PieceColor pieceColor) {
+
+        if (abs(endX - startX) != 2 || startY != endY) return false;
+        int rookX = (endX > startX) ? 7 : 0;
+        Tile& rookTile = getTile(rookX, startY);
+
+        if (!rookTile.hasPiece() || rookTile.getPiece()->getType() != PieceType::rook) return false;
+
+        if (pieceColor == white) {
+            if (whiteKingMoved || (rookX == 0 && whiteRookMovedLeft) || (rookX == 7 && whiteRookMovedRight)) {
+                return false;
+            }
+        }
+        else if (pieceColor == black) {
+            if (blackKingMoved || (rookX == 0 && blackRookMovedLeft) || (rookX == 7 && blackRookMovedRight)) {
+                return false;
+            }
+        }
+
+        if (!isPathClear(startX, startY, rookX, startY)) return false;
+
+        return true;
+    }
+
+    bool isEnPassantValid(int startX, int startY, int endX, int endY, PieceColor pieceColor) {
+        if (abs(endX - startX) == 1 && endY - startY == (pieceColor == PieceColor::white ? 1 : -1)) {
+            return lastDoubleMove.first == endX && lastDoubleMove.second == startY;
+        }
+        return false;
+    }
+
+    bool isMoveValid(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
+        int deltaX = abs(endX - startX);
+        int deltaY = abs(endY - startY);
+
+        switch (pieceType) {
+        case pawn:
+            if (isEnPassantValid(startX, startY, endX, endY, pieceColor)) return true;
+
+            if (pieceColor == PieceColor::white) {
+                if (startY == 1 && endY - startY == 2 && deltaX == 0 && isPathClear(startX, startY, endX, endY)) {
+                    lastDoubleMove = { endX, endY };
+                    return true;
+                }
+                if (endY - startY == 1 && deltaX == 0 && !getTile(endX, endY).hasPiece()) return true;
+                if (endY - startY == 1 && deltaX == 1 && getTile(endX, endY).hasPiece() &&
+                    getTile(endX, endY).getPiece()->getColor() == PieceColor::black) return true;
+            }
+            else if (pieceColor == PieceColor::black) {
+                if (startY == 6 && startY - endY == 2 && deltaX == 0 && isPathClear(startX, startY, endX, endY)) {
+                    lastDoubleMove = { endX, endY };
+                    return true;
+                }
+                if (startY - endY == 1 && deltaX == 0 && !getTile(endX, endY).hasPiece()) return true;
+                if (startY - endY == 1 && deltaX == 1 && getTile(endX, endY).hasPiece() &&
+                    getTile(endX, endY).getPiece()->getColor() == PieceColor::white) return true;
+            }
+            return false;
+
+        case king:
+            if (isCastlingValid(startX, startY, endX, endY, pieceColor)) return true;
+            return deltaX <= 1 && deltaY <= 1;
+
+        case knight:
+            return (deltaX == 2 && deltaY == 1) || (deltaX == 1 && deltaY == 2);
+
+        case bishop:
+            return deltaX == deltaY && isPathClear(startX, startY, endX, endY);
+
+        case rook:
+            return ((deltaX == 0 && deltaY > 0) || (deltaY == 0 && deltaX > 0)) && isPathClear(startX, startY, endX, endY);
+
+        case queen:
+            return ((deltaX == deltaY) || (deltaX == 0 && deltaY > 0) || (deltaY == 0 && deltaX > 0)) && isPathClear(startX, startY, endX, endY);
+
+        default:
+            return false;
+        }
+    }
+
+    void makeMove(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
+        if (isCastlingValid(startX, startY, endX, endY, pieceColor)) {
+            
+            int rookStartX = (endX > startX) ? 7 : 0;  
+            int rookEndX = (endX > startX) ? endX - 1 : endX + 1;
+
+            Piece rook = *getTile(rookStartX, startY).getPiece();
+            getTile(rookStartX, startY).removePiece();
+            getTile(rookEndX, startY).setPiece(PieceType::rook, pieceColor);
+
+            getTile(startX, startY).removePiece();
+            getTile(endX, endY).setPiece(pieceType, pieceColor);
+
+            if (pieceColor == PieceColor::white) {
+                whiteKingMoved = true;
+                if (rookStartX == 0) whiteRookMovedLeft = true;
+                if (rookStartX == 7) whiteRookMovedRight = true;
+            }
+            else if (pieceColor == PieceColor::black) {
+                blackKingMoved = true;
+                if (rookStartX == 0) blackRookMovedLeft = true;
+                if (rookStartX == 7) blackRookMovedRight = true;
+            }
+
+            switchTurn();
+            return;
+        }
+
+        if (isEnPassantValid(startX, startY, endX, endY, pieceColor)) {
+          
+            int capturedPawnY = (pieceColor == PieceColor::white) ? endY - 1 : endY + 1;
+            getTile(endX, capturedPawnY).removePiece();
+        }
+        getTile(startX, startY).removePiece();
+        getTile(endX, endY).setPiece(pieceType, pieceColor);
+
+        if (pieceType == PieceType::pawn && (endY == 0 || endY == 7)) {
+            promotePawn(endX, endY, pieceColor);
+        }
+
+        if (pieceType == PieceType::king) {
+            if (pieceColor == PieceColor::white) whiteKingMoved = true;
+            if (pieceColor == PieceColor::black) blackKingMoved = true;
+        }
+
+        if (pieceType == PieceType::rook) {
+            if (pieceColor == PieceColor::white) {
+                if (startX == 0 && startY == 0) whiteRookMovedLeft = true;
+                if (startX == 7 && startY == 0) whiteRookMovedRight = true;
+            }
+            else if (pieceColor == PieceColor::black) {
+                if (startX == 0 && startY == 7) blackRookMovedLeft = true;
+                if (startX == 7 && startY == 7) blackRookMovedRight = true; 
+            }
+        }
+
+        switchTurn();
+    }
+
     int getSize() const { return size; }
 private:
-    GameState gameState{};
-    const int size{};
-    std::vector<std::vector<Tile>> board {};
+    GameState gameState;
+    const int size;
+    std::vector<std::vector<Tile>> board;
+    std::pair<int, int> lastDoubleMove; 
+    bool whiteKingMoved;
+    bool blackKingMoved;
+    bool whiteRookMovedLeft;
+    bool whiteRookMovedRight;
+    bool blackRookMovedLeft;
+    bool blackRookMovedRight;
 };
 
 std::map<std::string, Texture2D> pieceTextures;
@@ -261,8 +350,7 @@ void updateAnimation(Board& board, float deltaTime) {
     animationTime += deltaTime;
     if (animationTime >= animationDuration) {
         isAnimating = false;
-        board.getTile(animEndX, animEndY).setPiece(animatingPiece.getType(), animatingPiece.getColor());
-        board.switchTurn();
+        board.makeMove(animStartX, animStartY, animEndX, animEndY, animatingPiece.getColor(), animatingPiece.getType());
     }
 }
 
@@ -278,12 +366,10 @@ void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
 
     for (int row = 0; row < boardSize; ++row) {
         for (int col = 0; col < boardSize; ++col) {
-            
             Color tileColor = (row + col) % 2 == 0 ? RAYWHITE : DARKGRAY;
             DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, tileColor);
             DrawRectangleLines(col * tileSize, row * tileSize, tileSize, tileSize, BLACK);
 
-            
             if (pieceSelected && row == selectedY && col == selectedX) {
                 DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, GREEN);
             }
@@ -291,7 +377,6 @@ void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
                 DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, YELLOW);
             }
 
-            
             Tile& tile = board.getTile(col, row);
             if (tile.hasPiece() && (!isAnimating || animStartX != col || animStartY != row)) {
                 const Piece& piece = *tile.getPiece();
@@ -315,7 +400,6 @@ void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
         }
     }
 
-    
     if (isAnimating) {
         float t = animationTime / animationDuration;
         float animX = Lerp(animStartX * tileSize, animEndX * tileSize, t);
@@ -336,9 +420,20 @@ void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
             Texture2D texture = pieceTextures[textureKey];
             DrawTexture(texture, animX, animY, WHITE);
         }
+
+        if (animatingPiece.getType() == PieceType::king && abs(animEndX - animStartX) == 2) {
+            int rookStartX = (animEndX > animStartX) ? 7 : 0;
+            int rookEndX = (animEndX > animStartX) ? animEndX - 1 : animEndX + 1;
+
+            float rookAnimX = Lerp(rookStartX * tileSize, rookEndX * tileSize, t);
+            float rookAnimY = animStartY * tileSize;
+
+            std::string rookTextureKey = animatingPiece.getColor() == PieceColor::white ? "rook_white" : "rook_black";
+            Texture2D rookTexture = pieceTextures[rookTextureKey];
+            DrawTexture(rookTexture, rookAnimX, rookAnimY, WHITE);
+        }
     }
 }
-
 
 
 void handlePlayerInput(Board& board, PieceColor currentTurn,
@@ -372,7 +467,7 @@ void handlePlayerInput(Board& board, PieceColor currentTurn,
         else {
             
             if (std::find(validMoves.begin(), validMoves.end(), std::make_pair(tileX, tileY)) != validMoves.end()) {
-                
+               
                 isAnimating = true;
                 animationTime = 0.0f;
                 animStartX = selectedX;
@@ -381,13 +476,11 @@ void handlePlayerInput(Board& board, PieceColor currentTurn,
                 animEndY = tileY;
                 animatingPiece = *board.getTile(selectedX, selectedY).getPiece();
 
-                board.getTile(selectedX, selectedY).removePiece();
-
                 pieceSelected = false;
                 validMoves.clear();
             }
             else {
-                
+
                 pieceSelected = false;
                 validMoves.clear();
             }
