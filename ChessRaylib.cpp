@@ -127,49 +127,53 @@ public:
     }
 
     bool isMoveValid(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
-        
         int deltaX = abs(endX - startX);
         int deltaY = abs(endY - startY);
 
         switch (pieceType) {
         case pawn:
-            
             if (pieceColor == PieceColor::white) {
-                if (startY == 1 && endY - startY == 2 && deltaX == 0 && isPathClear(startX, startY, endX, endY)) return true; // First move
-                if (endY - startY == 1 && deltaX == 0) return true; // Normal move
-                if (endY - startY == 1 && deltaX == 1) return true; // Capture
+                
+                if (startY == 1 && endY - startY == 2 && deltaX == 0 && isPathClear(startX, startY, endX, endY)) return true; 
+                if (endY - startY == 1 && deltaX == 0 && !getTile(endX, endY).hasPiece()) return true; 
+
+                
+                if (endY - startY == 1 && deltaX == 1 && getTile(endX, endY).hasPiece() &&
+                    getTile(endX, endY).getPiece()->getColor() == PieceColor::black) return true;
             }
             else if (pieceColor == PieceColor::black) {
-                if (startY == 6 && startY - endY == 2 && deltaX == 0 && isPathClear(startX, startY, endX, endY)) return true; // First move
-                if (startY - endY == 1 && deltaX == 0) return true; // Normal move
-                if (startY - endY == 1 && deltaX == 1) return true; // Capture
+                
+                if (startY == 6 && startY - endY == 2 && deltaX == 0 && isPathClear(startX, startY, endX, endY)) return true; 
+                if (startY - endY == 1 && deltaX == 0 && !getTile(endX, endY).hasPiece()) return true; 
+
+                
+                if (startY - endY == 1 && deltaX == 1 && getTile(endX, endY).hasPiece() &&
+                    getTile(endX, endY).getPiece()->getColor() == PieceColor::white) return true;
             }
             return false;
 
         case knight:
-            
             return (deltaX == 2 && deltaY == 1) || (deltaX == 1 && deltaY == 2);
 
         case bishop:
-            
             return deltaX == deltaY && isPathClear(startX, startY, endX, endY);
 
         case rook:
-            
             return ((deltaX == 0 && deltaY > 0) || (deltaY == 0 && deltaX > 0)) && isPathClear(startX, startY, endX, endY);
 
         case queen:
-            
             return ((deltaX == deltaY) || (deltaX == 0 && deltaY > 0) || (deltaY == 0 && deltaX > 0)) && isPathClear(startX, startY, endX, endY);
 
         case king:
-            
             return deltaX <= 1 && deltaY <= 1;
 
         default:
             return false;
         }
     }
+
+
+
 
     bool checkForObstaclesAtDestanationTile(int endX, int endY, PieceColor pieceColor) {
         if (!getTile(endX, endY).hasPiece()) {
@@ -207,7 +211,7 @@ public:
         }
     }
 
-    // pawn promotion, add where its needed
+    
     void promotePawn(int x, int y, PieceColor pieceColor) {
         getTile(x, y).removePiece();
         getTile(x, y).setPiece(PieceType::queen, pieceColor);
@@ -245,15 +249,29 @@ void unloadTextures() {
 }
 
 
-void drawBoard(Board& board) {
+void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
+    int selectedX, int selectedY, bool pieceSelected) {
     const int tileSize = 80;
     const int boardSize = board.getSize();
 
     for (int row = 0; row < boardSize; ++row) {
         for (int col = 0; col < boardSize; ++col) {
             
-            Color tileColor = (row + col) % 2 == 0 ? RAYWHITE : DARKGRAY;
-            DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, tileColor);
+            if (pieceSelected && row == selectedY && col == selectedX) {
+                DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, GREEN);
+                DrawRectangleLines(col * tileSize, row * tileSize, tileSize, tileSize, BLACK);
+            }
+            
+            else if (std::find(validMoves.begin(), validMoves.end(), std::make_pair(col, row)) != validMoves.end()) {
+                DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, YELLOW);
+                DrawRectangleLines(col * tileSize, row * tileSize, tileSize, tileSize, BLACK);
+            }
+            
+            else {
+                Color tileColor = (row + col) % 2 == 0 ? RAYWHITE : DARKGRAY;
+                DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, tileColor);
+                DrawRectangleLines(col * tileSize, row * tileSize, tileSize, tileSize, BLACK);
+            }
 
             
             Tile& tile = board.getTile(col, row);
@@ -261,7 +279,6 @@ void drawBoard(Board& board) {
                 const Piece& piece = *tile.getPiece();
                 std::string textureKey;
 
-                
                 switch (piece.getType()) {
                 case PieceType::pawn: textureKey = piece.getColor() == PieceColor::white ? "pawn_white" : "pawn_black"; break;
                 case PieceType::knight: textureKey = piece.getColor() == PieceColor::white ? "knight_white" : "knight_black"; break;
@@ -269,7 +286,6 @@ void drawBoard(Board& board) {
                 case PieceType::bishop: textureKey = piece.getColor() == PieceColor::white ? "bishop_white" : "bishop_black"; break;
                 case PieceType::queen: textureKey = piece.getColor() == PieceColor::white ? "queen_white" : "queen_black"; break;
                 case PieceType::king: textureKey = piece.getColor() == PieceColor::white ? "king_white" : "king_black"; break;
-                    
                 default: textureKey = ""; break;
                 }
 
@@ -282,32 +298,48 @@ void drawBoard(Board& board) {
     }
 }
 
-void handlePlayerInput(Board& board, PieceColor currentTurn) {
-    static bool pieceSelected = false;
-    static int selectedX = -1, selectedY = -1;
 
+void handlePlayerInput(Board& board, PieceColor currentTurn,
+    std::vector<std::pair<int, int>>& validMoves,
+    int& selectedX, int& selectedY, bool& pieceSelected) {
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
         int tileX = GetMouseX() / 80; 
         int tileY = GetMouseY() / 80;
 
         if (!pieceSelected) {
-            // Select a piece
+            
             if (board.getTile(tileX, tileY).hasPiece() &&
                 board.getTile(tileX, tileY).getPiece()->getColor() == currentTurn) {
                 pieceSelected = true;
                 selectedX = tileX;
                 selectedY = tileY;
+
+                
+                validMoves.clear();
+                for (int y = 0; y < board.getSize(); ++y) {
+                    for (int x = 0; x < board.getSize(); ++x) {
+                        if (board.validate(selectedX, selectedY, x, y,
+                            currentTurn,
+                            board.getTile(selectedX, selectedY).getPiece()->getType())) {
+                            validMoves.emplace_back(x, y);
+                        }
+                    }
+                }
             }
         }
         else {
-            // Move the piece
-            board.makeMove(selectedX, selectedY, tileX, tileY,
-                board.getTile(selectedX, selectedY).getPiece()->getColor(),
-                board.getTile(selectedX, selectedY).getPiece()->getType());
+
+            if (std::find(validMoves.begin(), validMoves.end(), std::make_pair(tileX, tileY)) != validMoves.end()) {
+                board.makeMove(selectedX, selectedY, tileX, tileY,
+                    board.getTile(selectedX, selectedY).getPiece()->getColor(),
+                    board.getTile(selectedX, selectedY).getPiece()->getType());
+            }
             pieceSelected = false;
+            validMoves.clear();
         }
     }
 }
+
 
 
 int main()
@@ -319,6 +351,10 @@ int main()
 
     Board chessBoard;
     loadTextures();
+
+    bool pieceSelected = false;
+    int selectedX = -1, selectedY = -1;
+    std::vector<std::pair<int, int>> validMoves;
 
     chessBoard.placePiece(0, 1, PieceType::pawn, PieceColor::white);
     chessBoard.placePiece(1, 1, PieceType::pawn, PieceColor::white);
@@ -354,19 +390,18 @@ int main()
     chessBoard.placePiece(4, 7, PieceType::queen, PieceColor::black);
     chessBoard.placePiece(3, 7, PieceType::king, PieceColor::black);
 
-    chessBoard.makeMove(0, 1, 0, 3, white, pawn);
-    chessBoard.makeMove(7, 6, 7, 4, black, pawn);
-
     SetTargetFPS(60);
 
     while (!WindowShouldClose()) {
+       
+        PieceColor currentTurn = chessBoard.isTurnValid(PieceColor::white) ? PieceColor::white : PieceColor::black;
 
-        handlePlayerInput(chessBoard, chessBoard.isTurnValid(PieceColor::white) ? PieceColor::white : PieceColor::black);
+        handlePlayerInput(chessBoard, currentTurn, validMoves, selectedX, selectedY, pieceSelected);
 
         BeginDrawing();
         ClearBackground(BLACK);
 
-        drawBoard(chessBoard);
+        drawBoard(chessBoard, validMoves, selectedX, selectedY, pieceSelected);
 
         EndDrawing();
     }
