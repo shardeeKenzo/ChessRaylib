@@ -4,6 +4,7 @@
 #include <optional>
 #include <cmath>
 #include <map>
+#include <sstream>
 #include "raylib.h"
 
 enum PieceType {
@@ -50,17 +51,21 @@ private:
     PieceType pieceType{};
 };
 
-bool isAnimating = false;              // Whether an animation is ongoing
-float animationTime = 0.0f;            // Elapsed time for the current animation
-float animationDuration = 0.3f;        // Total duration of the animation in seconds
-int animStartX = -1, animStartY = -1;  // Starting tile of the animated piece
-int animEndX = -1, animEndY = -1;      // Ending tile of the animated piece
-Piece animatingPiece;                  // Piece being animated
+bool isAnimating = false;
+float animationTime = 0.0f;
+float animationDuration = 0.3f;
+int animStartX = -1, animStartY = -1;
+int animEndX = -1, animEndY = -1;
+Piece animatingPiece;
+bool pendingPromotion = false;
+int promotionX = -1, promotionY = -1;
+PieceColor promotionColor = PieceColor::unknownColor;
 
 class Tile {
 public:
-    Tile(int row_, int column_) : row{row_}, column{column_}, piece{std::nullopt}
-    { }
+    Tile(int row_, int column_) : row{ row_ }, column{ column_ }, piece{ std::nullopt }
+    {
+    }
 
     void setPiece(PieceType type_, PieceColor color_) {
         piece = Piece(type_, color_);
@@ -76,20 +81,21 @@ public:
     const std::optional<Piece>& getPiece() const { return piece; }
 
 private:
-    int row {};
-    int column {};
-    std::optional<Piece> piece {};
+    int row{};
+    int column{};
+    std::optional<Piece> piece{};
 };
 
 
 class Board {
 public:
-public:
     Board(const int size = 8)
         : size(size), gameState{ GameState::whiteTurn }, lastDoubleMove{ -1, -1 },
         whiteKingMoved{ false }, blackKingMoved{ false },
         whiteRookMovedLeft{ false }, whiteRookMovedRight{ false },
-        blackRookMovedLeft{ false }, blackRookMovedRight{ false } {
+        blackRookMovedLeft{ false }, blackRookMovedRight{ false },
+        halfMoveClock(0)
+    {
         for (int y = 0; y < size; ++y) {
             std::vector<Tile> row;
             for (int x = 0; x < size; ++x) {
@@ -97,6 +103,9 @@ public:
             }
             board.push_back(row);
         }
+
+        updatePositionKey();
+        repetitionCount[positionKey]++;
     }
 
     bool isKingInCheck(PieceColor pieceColor) {
@@ -149,7 +158,7 @@ public:
 
     bool isTurnValid(PieceColor pieceColor) const {
         return (gameState == GameState::whiteTurn && pieceColor == PieceColor::white) ||
-               (gameState == GameState::blackTurn && pieceColor == PieceColor::black);
+            (gameState == GameState::blackTurn && pieceColor == PieceColor::black);
     }
 
     void switchTurn() {
@@ -215,10 +224,10 @@ public:
 
         return !stillInCheck;
     }
-    
-    void promotePawn(int x, int y, PieceColor pieceColor) {
+
+    void promotePawn(int x, int y, PieceType chosenType, PieceColor pieceColor) {
         getTile(x, y).removePiece();
-        getTile(x, y).setPiece(PieceType::queen, pieceColor);
+        getTile(x, y).setPiece(chosenType, pieceColor);
     }
 
     bool isCastlingValid(int startX, int startY, int endX, int endY, PieceColor pieceColor) {
@@ -315,17 +324,17 @@ public:
     }
 
     void makeMove(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
+        bool isPawnMoveOrCapture = false;
         if (isCastlingValid(startX, startY, endX, endY, pieceColor)) {
-            
-            int rookStartX = (endX > startX) ? 7 : 0;  
+
+            int rookStartX = (endX > startX) ? 7 : 0;
             int rookEndX = (endX > startX) ? endX - 1 : endX + 1;
 
-            Piece rook = *getTile(rookStartX, startY).getPiece();
-            getTile(rookStartX, startY).removePiece();
             getTile(rookEndX, startY).setPiece(PieceType::rook, pieceColor);
+            getTile(rookStartX, startY).removePiece();
 
-            getTile(startX, startY).removePiece();
             getTile(endX, endY).setPiece(pieceType, pieceColor);
+            getTile(startX, startY).removePiece();
 
             if (pieceColor == PieceColor::white) {
                 whiteKingMoved = true;
@@ -339,24 +348,41 @@ public:
             }
 
             switchTurn();
+            updateHalfMoveClock(isPawnMoveOrCapture);
+            updatePositionKey();                      
+            repetitionCount[positionKey]++;           
             return;
         }
 
         if (isEnPassantValid(startX, startY, endX, endY, pieceColor)) {
-          
             int capturedPawnY = (pieceColor == PieceColor::white) ? endY - 1 : endY + 1;
             getTile(endX, capturedPawnY).removePiece();
+            isPawnMoveOrCapture = true;
         }
-        getTile(startX, startY).removePiece();
+
+        if (getTile(startX, startY).getPiece()->getType() == PieceType::pawn) {
+            isPawnMoveOrCapture = true;
+        }
+
+        if (getTile(endX, endY).hasPiece()) {
+            isPawnMoveOrCapture = true;
+        }
+
         getTile(endX, endY).setPiece(pieceType, pieceColor);
+        getTile(startX, startY).removePiece();
 
         if (pieceType == PieceType::pawn && (endY == 0 || endY == 7)) {
-            promotePawn(endX, endY, pieceColor);
+            // Defer promotion choice
+            pendingPromotion = true;
+            promotionX = endX;
+            promotionY = endY;
+            promotionColor = pieceColor;
         }
-
-        if (pieceType == PieceType::king) {
-            if (pieceColor == PieceColor::white) whiteKingMoved = true;
-            if (pieceColor == PieceColor::black) blackKingMoved = true;
+        else {
+            if (pieceType == PieceType::king) {
+                if (pieceColor == PieceColor::white) whiteKingMoved = true;
+                if (pieceColor == PieceColor::black) blackKingMoved = true;
+            }
         }
 
         if (pieceType == PieceType::rook) {
@@ -366,25 +392,45 @@ public:
             }
             else if (pieceColor == PieceColor::black) {
                 if (startX == 0 && startY == 7) blackRookMovedLeft = true;
-                if (startX == 7 && startY == 7) blackRookMovedRight = true; 
+                if (startX == 7 && startY == 7) blackRookMovedRight = true;
             }
         }
 
         switchTurn();
+        updateHalfMoveClock(isPawnMoveOrCapture);
+        updatePositionKey();                     
+        repetitionCount[positionKey]++;          
     }
 
     int getSize() const { return size; }
+
+   
+    bool isThreefoldRepetition() const {
+        for (auto& entry : repetitionCount) {
+            if (entry.second >= 3) return true;
+        }
+        return false;
+    }
+
+    bool isFiftyMoveRuleDraw() const {
+        return halfMoveClock >= 100;
+    }
+
 private:
     GameState gameState;
     const int size;
     std::vector<std::vector<Tile>> board;
-    std::pair<int, int> lastDoubleMove; 
+    std::pair<int, int> lastDoubleMove;
     bool whiteKingMoved;
     bool blackKingMoved;
     bool whiteRookMovedLeft;
     bool whiteRookMovedRight;
     bool blackRookMovedLeft;
     bool blackRookMovedRight;
+
+    int halfMoveClock;
+    std::map<std::string, int> repetitionCount;
+    std::string positionKey;
 
     std::pair<int, int> findKing(PieceColor pieceColor) {
         for (int y = 0; y < size; ++y) {
@@ -436,10 +482,58 @@ private:
             getTile(endX, endY).setPiece(capturedPiece.getType(), capturedPiece.getColor());
         }
     }
+
+    void updateHalfMoveClock(bool isPawnMoveOrCapture) {
+        if (isPawnMoveOrCapture) {
+            halfMoveClock = 0;
+        }
+        else {
+            halfMoveClock++;
+        }
+    }
+
+    std::string generatePositionKey() {
+        std::ostringstream oss;
+        // Board pieces
+        for (int y = 0; y < size; ++y) {
+            for (int x = 0; x < size; ++x) {
+                if (getTile(x, y).hasPiece()) {
+                    const Piece& p = *getTile(x, y).getPiece();
+                    char c = ' ';
+                    switch (p.getType()) {
+                    case pawn: c = 'P'; break;
+                    case knight: c = 'N'; break;
+                    case bishop: c = 'B'; break;
+                    case rook: c = 'R'; break;
+                    case queen: c = 'Q'; break;
+                    case king: c = 'K'; break;
+                    default: c = '.'; break;
+                    }
+                    if (p.getColor() == black) c = tolower(c);
+                    oss << c;
+                }
+                else {
+                    oss << '.';
+                }
+            }
+        }
+        
+        oss << ((gameState == whiteTurn) ? 'w' : 'b');
+
+        if (!whiteKingMoved && !whiteRookMovedLeft) oss << 'Q';
+        if (!whiteKingMoved && !whiteRookMovedRight) oss << 'K';
+        if (!blackKingMoved && !blackRookMovedLeft) oss << 'q';
+        if (!blackKingMoved && !blackRookMovedRight) oss << 'k';
+
+        return oss.str();
+    }
+
+    void updatePositionKey() {
+        positionKey = generatePositionKey();
+    }
 };
 
 std::map<std::string, Texture2D> pieceTextures;
-
 
 void loadTextures() {
     pieceTextures["pawn_white"] = LoadTexture("images/pawn_white.png");
@@ -455,7 +549,6 @@ void loadTextures() {
     pieceTextures["king_white"] = LoadTexture("images/king_white.png");
     pieceTextures["king_black"] = LoadTexture("images/king_black.png");
 }
-
 
 void unloadTextures() {
     for (auto& [key, texture] : pieceTextures) {
@@ -477,6 +570,63 @@ float Lerp(float start, float end, float t) {
     return start + t * (end - start);
 }
 
+void drawPromotionUI(PieceColor color) {
+  
+    int panelX = 200;
+    int panelY = 200;
+    int panelWidth = 240;
+    int panelHeight = 100;
+    DrawRectangle(panelX, panelY, panelWidth, panelHeight, DARKGRAY);
+    DrawText("Promote Pawn:", panelX + 10, panelY + 10, 20, WHITE);
+
+    std::vector<std::pair<PieceType, std::string>> options = {
+        {queen,  (color == white ? "queen_white" : "queen_black")},
+        {rook,   (color == white ? "rook_white" : "rook_black")},
+        {bishop, (color == white ? "bishop_white" : "bishop_black")},
+        {knight, (color == white ? "knight_white" : "knight_black")}
+    };
+
+    int startX = panelX + 20;
+    int startY = panelY + 40;
+    int spacing = 50;
+
+    for (int i = 0; i < (int)options.size(); i++) {
+        Texture2D tex = pieceTextures[options[i].second];
+        DrawTexture(tex, startX + i * spacing, startY, WHITE);
+    }
+}
+
+PieceType handlePromotionInput(PieceColor color) {
+ 
+    int panelX = 200;
+    int panelY = 200;
+    int startX = panelX + 20;
+    int startY = panelY + 40;
+    int spacing = 50;
+
+    struct Choice {
+        PieceType type;
+        Rectangle rect;
+    };
+
+    std::vector<Choice> choices = {
+        {queen,  {(float)startX + 0 * spacing, (float)startY, 40.0f, 40.0f}},
+        {rook,   {(float)startX + 1 * spacing, (float)startY, 40.0f, 40.0f}},
+        {bishop, {(float)startX + 2 * spacing, (float)startY, 40.0f, 40.0f}},
+        {knight, {(float)startX + 3 * spacing, (float)startY, 40.0f, 40.0f}}
+    };
+
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        Vector2 mousePos = GetMousePosition();
+        for (auto& ch : choices) {
+            if (CheckCollisionPointRec(mousePos, ch.rect)) {
+                return ch.type;
+            }
+        }
+    }
+
+    return none;
+}
 
 void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
     int selectedX, int selectedY, bool pieceSelected) {
@@ -550,7 +700,7 @@ void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
 
         if (!textureKey.empty()) {
             Texture2D texture = pieceTextures[textureKey];
-            DrawTexture(texture, margin + animX, margin + animY, WHITE);
+            DrawTexture(texture, margin + (int)animX, margin + (int)animY, WHITE);
         }
 
         if (animatingPiece.getType() == PieceType::king && abs(animEndX - animStartX) == 2) {
@@ -562,7 +712,7 @@ void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
 
             std::string rookTextureKey = animatingPiece.getColor() == PieceColor::white ? "rook_white" : "rook_black";
             Texture2D rookTexture = pieceTextures[rookTextureKey];
-            DrawTexture(rookTexture, rookAnimX, rookAnimY, WHITE);
+            DrawTexture(rookTexture, margin + (int)rookAnimX, margin + (int)rookAnimY, WHITE);
         }
     }
 }
@@ -571,9 +721,14 @@ void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
 void handlePlayerInput(Board& board, PieceColor currentTurn,
     std::vector<std::pair<int, int>>& validMoves,
     int& selectedX, int& selectedY, bool& pieceSelected) {
+
+    if (pendingPromotion) return;
+
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-        int tileX = GetMouseX() / 80;
-        int tileY = GetMouseY() / 80;
+        int tileSize = 80;
+        int margin = 20;
+        int tileX = (GetMouseX() - margin) / tileSize;
+        int tileY = (GetMouseY() - margin) / tileSize;
 
         if (tileX < 0 || tileX >= board.getSize() || tileY < 0 || tileY >= board.getSize()) {
             return;
@@ -586,7 +741,6 @@ void handlePlayerInput(Board& board, PieceColor currentTurn,
                 selectedX = tileX;
                 selectedY = tileY;
 
-                // Generate valid moves
                 validMoves.clear();
                 for (int y = 0; y < board.getSize(); ++y) {
                     for (int x = 0; x < board.getSize(); ++x) {
@@ -682,17 +836,56 @@ int main()
         else {
             PieceColor currentTurn = chessBoard.isTurnValid(PieceColor::white) ? PieceColor::white : PieceColor::black;
 
+            if (chessBoard.isThreefoldRepetition()) {
+                BeginDrawing();
+                ClearBackground(BLACK);
+                DrawText("Draw by threefold repetition!", 100, 100, 20, BLUE);
+                EndDrawing();
+                continue;
+            }
+            if (chessBoard.isFiftyMoveRuleDraw()) {
+                BeginDrawing();
+                ClearBackground(BLACK);
+                DrawText("Draw by fifty-move rule!", 100, 100, 20, BLUE);
+                EndDrawing();
+                continue;
+            }
+
             if (chessBoard.isKingInCheckmate(currentTurn)) {
+                BeginDrawing();
+                ClearBackground(BLACK);
                 DrawText("Checkmate! Game Over.", 100, 100, 20, RED);
+                EndDrawing();
+                continue;
             }
             else if (chessBoard.isStalemate(currentTurn)) {
+                BeginDrawing();
+                ClearBackground(BLACK);
                 DrawText("Stalemate! Game Draw.", 100, 100, 20, YELLOW);
+                EndDrawing();
+                continue;
             }
             else {
+                if (pendingPromotion) {
+                    BeginDrawing();
+                    ClearBackground(BLACK);
+                    drawBoard(chessBoard, validMoves, selectedX, selectedY, pieceSelected);
+                    drawPromotionUI(promotionColor);
+                    EndDrawing();
+
+                    PieceType choice = handlePromotionInput(promotionColor);
+                    if (choice != none) {
+                        chessBoard.promotePawn(promotionX, promotionY, choice, promotionColor);
+                        pendingPromotion = false;
+                    }
+                    continue;
+                }
+
+                BeginDrawing();
+                ClearBackground(BLACK);
                 if (chessBoard.isKingInCheck(currentTurn)) {
                     DrawText("Check!", 100, 100, 20, ORANGE);
                 }
-
                 handlePlayerInput(chessBoard, currentTurn, validMoves, selectedX, selectedY, pieceSelected);
             }
         }
