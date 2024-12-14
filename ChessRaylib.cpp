@@ -99,6 +99,54 @@ public:
         }
     }
 
+    bool isKingInCheck(PieceColor pieceColor) {
+        std::pair<int, int> kingPosition = findKing(pieceColor);
+        return isTileUnderAttack(kingPosition.first, kingPosition.second, pieceColor);
+    }
+
+    bool isKingInCheckmate(PieceColor pieceColor) {
+        if (!isKingInCheck(pieceColor)) return false;
+
+        for (int y = 0; y < size; ++y) {
+            for (int x = 0; x < size; ++x) {
+                Tile& tile = getTile(x, y);
+                if (tile.hasPiece() && tile.getPiece()->getColor() == pieceColor) {
+                    for (int targetY = 0; targetY < size; ++targetY) {
+                        for (int targetX = 0; targetX < size; ++targetX) {
+                            if (validate(x, y, targetX, targetY, pieceColor, tile.getPiece()->getType())) {
+                                Piece capturedPiece = simulateMove(x, y, targetX, targetY);
+                                bool stillInCheck = isKingInCheck(pieceColor);
+                                undoMove(x, y, targetX, targetY, capturedPiece);
+                                if (!stillInCheck) return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    bool isStalemate(PieceColor pieceColor) {
+        if (isKingInCheck(pieceColor)) return false;
+
+        for (int y = 0; y < size; ++y) {
+            for (int x = 0; x < size; ++x) {
+                Tile& tile = getTile(x, y);
+                if (tile.hasPiece() && tile.getPiece()->getColor() == pieceColor) {
+                    for (int targetY = 0; targetY < size; ++targetY) {
+                        for (int targetX = 0; targetX < size; ++targetX) {
+                            if (validate(x, y, targetX, targetY, pieceColor, tile.getPiece()->getType())) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     bool isTurnValid(PieceColor pieceColor) const {
         return (gameState == GameState::whiteTurn && pieceColor == PieceColor::white) ||
                (gameState == GameState::blackTurn && pieceColor == PieceColor::black);
@@ -109,7 +157,7 @@ public:
     }
 
     Tile& getTile(int x, int y) {
-        if (x < 0 || x >= board.size() || y < 0 || y >= board[0].size()) {
+        if (x < 0 || x >= size || y < 0 || y >= size) {
             throw std::out_of_range("Invalid tile coordinates");
         }
         return board[y][x];
@@ -155,10 +203,17 @@ public:
     }
 
     bool validate(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
-        if (isMoveValid(startX, startY, endX, endY, pieceColor, pieceType) && isTurnValid(pieceColor) && checkForObstaclesAtDestanationTile(endX, endY, pieceColor)) {
-            return true;
+        if (!isMoveValid(startX, startY, endX, endY, pieceColor, pieceType)) {
+            return false;
         }
-        return false;
+
+        Piece capturedPiece = simulateMove(startX, startY, endX, endY);
+
+        bool stillInCheck = isKingInCheck(pieceColor);
+
+        undoMove(startX, startY, endX, endY, capturedPiece);
+
+        return !stillInCheck;
     }
     
     void promotePawn(int x, int y, PieceColor pieceColor) {
@@ -198,6 +253,19 @@ public:
     }
 
     bool isMoveValid(int startX, int startY, int endX, int endY, PieceColor pieceColor, PieceType pieceType) {
+        if (endX < 0 || endX >= size || endY < 0 || endY >= size) {
+            return false;
+        }
+
+        if (startX == endX && startY == endY) {
+            return false;
+        }
+
+        if (getTile(endX, endY).hasPiece() &&
+            getTile(endX, endY).getPiece()->getColor() == pieceColor) {
+            return false;
+        }
+
         int deltaX = abs(endX - startX);
         int deltaY = abs(endY - startY);
 
@@ -317,6 +385,57 @@ private:
     bool whiteRookMovedRight;
     bool blackRookMovedLeft;
     bool blackRookMovedRight;
+
+    std::pair<int, int> findKing(PieceColor pieceColor) {
+        for (int y = 0; y < size; ++y) {
+            for (int x = 0; x < size; ++x) {
+                Tile& tile = getTile(x, y);
+                if (tile.hasPiece() && tile.getPiece()->getType() == PieceType::king &&
+                    tile.getPiece()->getColor() == pieceColor) {
+                    return { x, y };
+                }
+            }
+        }
+        throw std::runtime_error("King not found on the board!");
+    }
+
+    bool isTileUnderAttack(int x, int y, PieceColor defenderColor) {
+        PieceColor attackerColor = (defenderColor == PieceColor::white) ? PieceColor::black : PieceColor::white;
+
+        for (int row = 0; row < size; ++row) {
+            for (int col = 0; col < size; ++col) {
+                Tile& tile = getTile(col, row);
+                if (tile.hasPiece() && tile.getPiece()->getColor() == attackerColor &&
+                    isMoveValid(col, row, x, y, attackerColor, tile.getPiece()->getType())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    Piece simulateMove(int startX, int startY, int endX, int endY) {
+        Piece capturedPiece = Piece();
+        if (getTile(endX, endY).hasPiece()) {
+            capturedPiece = *getTile(endX, endY).getPiece();
+        }
+
+        getTile(endX, endY).setPiece(getTile(startX, startY).getPiece()->getType(),
+            getTile(startX, startY).getPiece()->getColor());
+        getTile(startX, startY).removePiece();
+
+        return capturedPiece;
+    }
+
+    void undoMove(int startX, int startY, int endX, int endY, Piece capturedPiece) {
+        getTile(startX, startY).setPiece(getTile(endX, endY).getPiece()->getType(),
+            getTile(endX, endY).getPiece()->getColor());
+        getTile(endX, endY).removePiece();
+
+        if (capturedPiece.getType() != PieceType::none) {
+            getTile(endX, endY).setPiece(capturedPiece.getType(), capturedPiece.getColor());
+        }
+    }
 };
 
 std::map<std::string, Texture2D> pieceTextures;
@@ -363,18 +482,31 @@ void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
     int selectedX, int selectedY, bool pieceSelected) {
     const int tileSize = 80;
     const int boardSize = board.getSize();
+    const int margin = 20;
+
+    for (int col = 0; col < boardSize; ++col) {
+        std::string label(1, 'A' + col);
+        DrawText(label.c_str(), margin + col * tileSize + tileSize / 2 - 5, 0, 20, WHITE);
+        DrawText(label.c_str(), margin + col * tileSize + tileSize / 2 - 5, margin + boardSize * tileSize + 5, 20, WHITE);
+    }
+
+    for (int row = 0; row < boardSize; ++row) {
+        std::string label = std::to_string(boardSize - row);
+        DrawText(label.c_str(), 0, margin + row * tileSize + tileSize / 2 - 10, 20, WHITE);
+        DrawText(label.c_str(), margin + boardSize * tileSize + 5, margin + row * tileSize + tileSize / 2 - 10, 20, WHITE);
+    }
 
     for (int row = 0; row < boardSize; ++row) {
         for (int col = 0; col < boardSize; ++col) {
             Color tileColor = (row + col) % 2 == 0 ? RAYWHITE : DARKGRAY;
-            DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, tileColor);
-            DrawRectangleLines(col * tileSize, row * tileSize, tileSize, tileSize, BLACK);
+            DrawRectangle(margin + col * tileSize, margin + row * tileSize, tileSize, tileSize, tileColor);
+            DrawRectangleLines(margin + col * tileSize, margin + row * tileSize, tileSize, tileSize, BLACK);
 
             if (pieceSelected && row == selectedY && col == selectedX) {
-                DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, GREEN);
+                DrawRectangle(margin + col * tileSize, margin + row * tileSize, tileSize, tileSize, GREEN);
             }
             else if (std::find(validMoves.begin(), validMoves.end(), std::make_pair(col, row)) != validMoves.end()) {
-                DrawRectangle(col * tileSize, row * tileSize, tileSize, tileSize, YELLOW);
+                DrawRectangle(margin + col * tileSize, margin + row * tileSize, tileSize, tileSize, YELLOW);
             }
 
             Tile& tile = board.getTile(col, row);
@@ -394,7 +526,7 @@ void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
 
                 if (!textureKey.empty()) {
                     Texture2D texture = pieceTextures[textureKey];
-                    DrawTexture(texture, col * tileSize, row * tileSize, WHITE);
+                    DrawTexture(texture, margin + col * tileSize, margin + row * tileSize, WHITE);
                 }
             }
         }
@@ -418,7 +550,7 @@ void drawBoard(Board& board, const std::vector<std::pair<int, int>>& validMoves,
 
         if (!textureKey.empty()) {
             Texture2D texture = pieceTextures[textureKey];
-            DrawTexture(texture, animX, animY, WHITE);
+            DrawTexture(texture, margin + animX, margin + animY, WHITE);
         }
 
         if (animatingPiece.getType() == PieceType::king && abs(animEndX - animStartX) == 2) {
@@ -440,18 +572,21 @@ void handlePlayerInput(Board& board, PieceColor currentTurn,
     std::vector<std::pair<int, int>>& validMoves,
     int& selectedX, int& selectedY, bool& pieceSelected) {
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-        int tileX = GetMouseX() / 80; 
+        int tileX = GetMouseX() / 80;
         int tileY = GetMouseY() / 80;
 
+        if (tileX < 0 || tileX >= board.getSize() || tileY < 0 || tileY >= board.getSize()) {
+            return;
+        }
+
         if (!pieceSelected) {
-            
             if (board.getTile(tileX, tileY).hasPiece() &&
                 board.getTile(tileX, tileY).getPiece()->getColor() == currentTurn) {
                 pieceSelected = true;
                 selectedX = tileX;
                 selectedY = tileY;
 
-                
+                // Generate valid moves
                 validMoves.clear();
                 for (int y = 0; y < board.getSize(); ++y) {
                     for (int x = 0; x < board.getSize(); ++x) {
@@ -463,11 +598,12 @@ void handlePlayerInput(Board& board, PieceColor currentTurn,
                     }
                 }
             }
+            else {
+                return;
+            }
         }
         else {
-            
             if (std::find(validMoves.begin(), validMoves.end(), std::make_pair(tileX, tileY)) != validMoves.end()) {
-               
                 isAnimating = true;
                 animationTime = 0.0f;
                 animStartX = selectedX;
@@ -480,7 +616,6 @@ void handlePlayerInput(Board& board, PieceColor currentTurn,
                 validMoves.clear();
             }
             else {
-
                 pieceSelected = false;
                 validMoves.clear();
             }
@@ -490,8 +625,8 @@ void handlePlayerInput(Board& board, PieceColor currentTurn,
 
 int main()
 {
-    const int screenWidth = 640;
-    const int screenHeight = 640;
+    const int screenWidth = 640 + 2 * 20;
+    const int screenHeight = 640 + 2 * 20;
 
     InitWindow(screenWidth, screenHeight, "Chess Game");
 
@@ -539,14 +674,27 @@ int main()
     SetTargetFPS(60);
 
     while (!WindowShouldClose()) {
-        float deltaTime = GetFrameTime(); 
+        float deltaTime = GetFrameTime();
 
         if (isAnimating) {
             updateAnimation(chessBoard, deltaTime);
         }
         else {
             PieceColor currentTurn = chessBoard.isTurnValid(PieceColor::white) ? PieceColor::white : PieceColor::black;
-            handlePlayerInput(chessBoard, currentTurn, validMoves, selectedX, selectedY, pieceSelected);
+
+            if (chessBoard.isKingInCheckmate(currentTurn)) {
+                DrawText("Checkmate! Game Over.", 100, 100, 20, RED);
+            }
+            else if (chessBoard.isStalemate(currentTurn)) {
+                DrawText("Stalemate! Game Draw.", 100, 100, 20, YELLOW);
+            }
+            else {
+                if (chessBoard.isKingInCheck(currentTurn)) {
+                    DrawText("Check!", 100, 100, 20, ORANGE);
+                }
+
+                handlePlayerInput(chessBoard, currentTurn, validMoves, selectedX, selectedY, pieceSelected);
+            }
         }
 
         BeginDrawing();
